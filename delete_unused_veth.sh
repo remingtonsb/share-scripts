@@ -83,6 +83,9 @@ echo ""
 list_orphaned_interfaces
 
 if [ $? -ne 0 ];then
+        echo ""
+        operations_veth
+	echo ""
         echo "##########################################################################"    
         echo "#Não existem interfaces veth orfãs para serem deletadas, saindo do script#"
         echo "##########################################################################"
@@ -92,14 +95,15 @@ else
         operations_veth
         
 	if [ "$TOTAL_NOT_USED" -gt "$SUB_VETH" ]; then
+		echo ""
 		echo "Reiniciando Docker"
                 restart_docker
                 if [ $? -ne 0 ];then
 			echo "Problemas para reiniciar o Docker"
 			exit 11
 		else
+			echo ""
 			echo "Docker Reiniciado com Sucesso"
-                        operations_veth
                         delete_interfaces
 		fi
  		
