@@ -1,5 +1,9 @@
 #!/bin/bash
 
+
+
+### Functions ###
+
 function list_all_interfaces(){
 for container in $(docker ps --format '{{.Names}}'); do
      iflink=`docker exec -it $container bash -c 'cat /sys/class/net/eth*/iflink'`
@@ -23,6 +27,52 @@ for container in $(docker ps --format '{{.Names}}'); do
     done
 done
 }
+
+function list_uniq_interfaces(){
+for interfaces in $(list_all_interfaces | sort | uniq);do echo $interfaces;done
+}
+
+function operations_veth(){
+
+	TOTAL_VETHS=`ip a | grep veth | wc -l`
+        TOTAL_PODS=`sudo docker ps | grep POD | wc -l`
+        TOTAL_NOT_USED=`ifconfig | grep veth | cut -f1 -d':'| egrep -v "$list_only_used_interfaces" | wc -l`
+        SUB_VETH=`expr $TOTAL_VETHS - $TOTAL_PODS`
+        echo ""
+        echo "###############################################################################################"
+        echo "Informações das interfaces veth                                                               #"
+        echo "###############################################################################################" 
+        echo "Total veth no servidor      : "$TOTAL_VETHS
+        echo "Total PODS no Servidor      : "$TOTAL_PODS
+        echo "Total veth orfãs no Servidor: "$TOTAL_NOT_USED
+}
+
+
+function list_orphaned_interfaces(){
+	for unused_interfaces in $(list_uniq_interfaces);do orphan_interfaces="$orphan_interfaces|$unused_interfaces";done
+	list_only_used_interfaces=`echo $orphan_interfaces | sed 's/|/''/'`
+        ifconfig | grep veth | cut -f1 -d':'| egrep -v "$list_only_used_interfaces" >>/dev/null
+}
+
+function restart_docker(){
+	sudo systemctl restart docker
+	
+}
+
+function delete_interfaces(){
+			echo "" 
+                        echo "###################################################################################################"
+                        echo "#O script irá deletar as seguintes interfaces veth que não estão sendo usadas por nenhum container#"
+                        echo "###################################################################################################"
+                        echo "" 
+
+                        ifconfig | grep veth | cut -f1 -d':'| egrep -v "$list_only_used_interfaces"
+
+                        for delete_interface in $(ifconfig | grep veth | cut -f1 -d':'| egrep -v "$list_only_used_interfaces");do ip link set $delete_interface down && ip link delete $delete_interface;done
+}
+
+### Starting Script ###
+
 echo "####################################################"
 echo "#Listando todos os containers com interfaces ativas#"
 echo "####################################################"
@@ -30,28 +80,31 @@ echo ""
 list_and_show_all_interfaces
 echo ""
 
-function list_uniq_interfaces(){
-for interfaces in $(list_all_interfaces | sort | uniq);do echo $interfaces;done
-}
-
-for unused_interfaces in $(list_uniq_interfaces);do orphan_interfaces="$orphan_interfaces|$unused_interfaces";done
-list_only_used_interfaces=`echo $orphan_interfaces | sed 's/|/''/'`
-
-ifconfig | grep veth | cut -f1 -d':'| egrep -v "$list_only_used_interfaces" >>/dev/null
+list_orphaned_interfaces
 
 if [ $? -ne 0 ];then
-        echo "#####################################################################"    
-        echo "#Não existem interfaces orfãs para serem deletadas, saindo do script#"
-        echo "#####################################################################" 
+        echo "##########################################################################"    
+        echo "#Não existem interfaces veth orfãs para serem deletadas, saindo do script#"
+        echo "##########################################################################"
+        echo "Saindo do Script" 
         exit 10
-else
-        echo "###############################################################################################"
-        echo "#O sistema irá deletar as seguintes interfaces que não estão sendo usadas por nenhum container#"
-        echo "###############################################################################################"
-        echo ""
+else    
+        operations_veth
+        
+	if [ "$TOTAL_NOT_USED" -gt "$SUB_VETH" ]; then
+		echo "Reiniciando Docker"
+                restart_docker
+                if [ $? -ne 0 ];then
+			echo "Problemas para reiniciar o Docker"
+			exit 11
+		else
+			echo "Docker Reiniciado com Sucesso"
+                        operations_veth
+                        delete_interfaces
+		fi
+ 		
+	else
+		delete_interfaces	
 
-        ifconfig | grep veth | cut -f1 -d':'| egrep -v "$list_only_used_interfaces"
-
-        for delete_interface in $(ifconfig | grep veth | cut -f1 -d':'| egrep -v "$list_only_used_interfaces");do ip link set $delete_interface down && ip link delete $delete_interface;done
-
+	fi
 fi
